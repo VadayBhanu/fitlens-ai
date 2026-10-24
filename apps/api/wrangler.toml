@@ -1,0 +1,58 @@
+# FitLens API — Cloudflare Worker
+# Docs: docs/GUIDE.md (section "Deploy the API").
+name = "fitlens-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[observability]
+enabled = true
+
+[triggers]
+# Reconcile try-on jobs and purge expired temporary photos.
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fitlens"
+# Replace with the id printed by `npx wrangler d1 create fitlens`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# Private object storage for photos and media. R2 has a free tier (10 GB) but
+# Cloudflare asks for a payment method to enable it. If you don't enable R2,
+# comment this block out and uncomment the KV block below — the API falls back
+# to Workers KV automatically.
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "fitlens-assets"
+
+# [[kv_namespaces]]
+# binding = "ASSETS_KV"
+# id = "replace-with-kv-namespace-id"
+
+# Optional: Workers AI powers sourced review summaries (free daily allowance).
+# Uncomment after `npx wrangler login` — the AI binding always runs remotely,
+# so it needs a Cloudflare account even during local development.
+# [ai]
+# binding = "AI"
+
+[vars]
+APP_ORIGIN = "http://localhost:5173"
+# Comma-separated. "chrome-extension://*" accepts any extension ID — replace it
+# with your published extension's ID in production.
+ALLOWED_ORIGINS = "http://localhost:5173,chrome-extension://*"
+FREE_DAILY_TRYONS = "10"
+MAX_ACTIVE_TRYONS = "2"
+TEMP_PHOTO_RETENTION_HOURS = "24"
+PASSWORD_PBKDF2_ITERATIONS = "100000"
+TRYON_PROVIDER = "fashn"
+ENVIRONMENT = "development"
+
+# Secrets (never commit). Set with `npx wrangler secret put NAME`, or for local
+# dev put them in apps/api/.dev.vars:
+#   SIGNING_SECRET   — random 32+ byte string for signed media URLs (required)
+#   FASHN_API_KEY    — FASHN virtual try-on API key (required for photo try-on)
+#   SERPAPI_KEY      — optional, enables live Google Shopping offer discovery
+#   ADMIN_TOKEN      — optional, enables /v1/admin/* catalog ingestion

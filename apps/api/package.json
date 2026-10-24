@@ -1,0 +1,24 @@
+{
+  "name": "@fitlens/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply fitlens --local",
+    "db:migrate:remote": "wrangler d1 migrations apply fitlens --remote",
+    "db:seed-demo:local": "wrangler d1 execute fitlens --local --file=seeds/demo.sql",
+    "db:seed-demo:remote": "wrangler d1 execute fitlens --remote --file=seeds/demo.sql"
+  },
+  "dependencies": {
+    "@fitlens/shared": "*",
+    "hono": "^4.13.13",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "wrangler": "^4.152.0"
+  }
+}

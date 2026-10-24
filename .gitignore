@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+playwright-report/
+test-results/
+apps/extension/release/
+.DS_Store
+tests/e2e/.fixtures/
+apps/extension/dist-e2e/

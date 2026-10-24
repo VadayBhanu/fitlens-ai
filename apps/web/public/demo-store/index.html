@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Northline &amp; Co. — FitLens demo store</title>
+  <meta property="og:site_name" content="FitLens Demo Store" />
+  <style>
+    :root { --ink: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --bg: #fbfaf8; --accent: #1f3b2d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; color: var(--ink); background: var(--bg); }
+    .banner { background: #fff4d6; color: #5c4400; font: 13px/1.4 system-ui, sans-serif; padding: 8px 16px; text-align: center; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 20px 32px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0; font-size: 24px; letter-spacing: 0.08em; }
+    header nav { font: 14px system-ui, sans-serif; color: var(--muted); display: flex; gap: 20px; }
+    main { max-width: 1120px; margin: 0 auto; padding: 32px 16px 64px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 28px; }
+    .product { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .product img { width: 100%; aspect-ratio: 9 / 10; object-fit: contain; background: #f2f0ec; display: block; }
+    .info { padding: 16px 18px 20px; font-family: system-ui, sans-serif; }
+    .brand { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; }
+    .name { font: 600 18px Georgia, serif; margin: 4px 0 6px; }
+    .price { font-size: 17px; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 13px; margin: 6px 0 12px; }
+    .sizes { display: flex; gap: 6px; flex-wrap: wrap; }
+    .sizes button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 13px system-ui; }
+    .sizes button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .add { margin-top: 14px; width: 100%; padding: 11px; border: 0; border-radius: 10px; background: var(--ink); color: #fff; font: 600 14px system-ui; cursor: pointer; }
+    footer { text-align: center; color: var(--muted); font: 13px system-ui; padding: 32px; }
+  </style>
+</head>
+<body>
+  <div class="banner">This is a fictional demo store for testing FitLens AI. Products, prices and reviews are sample data.</div>
+  <header>
+    <h1>NORTHLINE &amp; CO.</h1>
+    <nav><span>New in</span><span>Tops</span><span>Outerwear</span><span>Sale</span></nav>
+  </header>
+  <main>
+    <div class="grid" id="grid"></div>
+  </main>
+  <footer>FitLens demo store · Not a real retailer</footer>
+
+  <script>
+    const products = [
+      { id: "nl-tee-01", name: "Everyday Organic Crew Tee", brand: "Northline", color: "White", mpn: "NL-TEE-01", price: "28.00",
+        img: "img/crew-tee-white.png", gtins: { S: "840000001214", M: "840000001016", L: "840000001030" },
+        description: "Heavyweight organic cotton crew-neck T-shirt with a relaxed fit." },
+      { id: "nl-204", name: "Denim Trucker Jacket", brand: "Northline", color: "Indigo", mpn: "NL-204", price: "89.00",
+        img: "img/denim-jacket-indigo.png", gtins: { S: "840000001122", M: "840000001023", L: "840000001115" },
+        description: "Classic trucker jacket in rigid indigo denim with chest pockets." },
+      { id: "tw-11", name: "Linen Camp Collar Shirt", brand: "Tidewater", color: "Sage", mpn: "TW-11", price: "54.00",
+        img: "img/camp-shirt-sage.png", gtins: {},
+        description: "Breathable short-sleeve linen shirt with a camp collar." }
+    ];
+
+    const grid = document.getElementById("grid");
+    for (const p of products) {
+      const card = document.createElement("article");
+      card.className = "product";
+      card.dataset.productId = p.id;
+      const imgUrl = new URL(p.img, location.href).href;
+      card.innerHTML = `
+        <img src="${p.img}" alt="${p.brand} ${p.name} in ${p.color}" />
+        <div class="info">
+          <div class="brand">${p.brand}</div>
+          <div class="name">${p.name}</div>
+          <div class="price">$${p.price}</div>
+          <div class="meta">Color: ${p.color} · Style ${p.mpn}</div>
+          <div class="sizes" role="group" aria-label="Size">
+            ${["S", "M", "L"].map((s) => `<button type="button" data-size="${s}" aria-pressed="${s === "M"}">${s}</button>`).join("")}
+          </div>
+          <button class="add" type="button">Add to bag</button>
+        </div>
+        <script type="application/ld+json"><\/script>`;
+      grid.appendChild(card);
+      const ld = card.querySelector('script[type="application/ld+json"]');
+      const render = (size) => {
+        const data = {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          name: `${p.name}`,
+          brand: { "@type": "Brand", name: p.brand },
+          color: p.color,
+          size,
+          mpn: p.mpn,
+          ...(p.gtins[size] ? { gtin12: p.gtins[size] } : {}),
+          description: p.description,
+          image: [imgUrl],
+          url: `${location.origin}${location.pathname}#${p.id}`,
+          offers: { "@type": "Offer", price: p.price, priceCurrency: "USD", availability: "https://schema.org/InStock" }
+        };
+        ld.textContent = JSON.stringify(data);
+      };
+      render("M");
+      card.querySelectorAll(".sizes button").forEach((b) =>
+        b.addEventListener("click", () => {
+          card.querySelectorAll(".sizes button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+          render(b.dataset.size);
+        })
+      );
+    }
+  </script>
+</body>
+</html>

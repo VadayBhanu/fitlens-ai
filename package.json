@@ -1,0 +1,32 @@
+{
+  "name": "fitlens-ai",
+  "private": true,
+  "version": "1.0.0",
+  "description": "FitLens AI \u2014 virtual fitting room and smart shopping assistant (Chrome extension, web studio, Cloudflare API).",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:api": "npm run dev -w @fitlens/api",
+    "dev:web": "npm run dev -w @fitlens/web",
+    "dev:extension": "npm run watch -w @fitlens/extension",
+    "db:migrate:local": "npm run db:migrate:local -w @fitlens/api",
+    "db:seed-demo:local": "npm run db:seed-demo:local -w @fitlens/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:integration": "node tests/integration/api.mjs",
+    "test:e2e": "playwright test",
+    "build": "npm run build -w @fitlens/web && npm run build -w @fitlens/extension",
+    "package:extension": "npm run package -w @fitlens/extension",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

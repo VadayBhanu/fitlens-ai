@@ -62,18 +62,26 @@ client: quality check (resolution, exposure, Laplacian blur, MediaPipe person co
 ```
 Job states: `queued → processing → completed`, plus terminal `failed`, `cancelled` and `expired`. A completed job can still carry warnings.
 
-### LiveMirror
+### LiveMirror (3D cloth)
 ```
-getUserMedia (after click) → <video> → canvas.drawImage
-  → PoseLandmarker.detectForVideo (GPU, CPU fallback; adaptive rate)
-  → map landmarks to image-left/right → LandmarkSmoother (One Euro + confidence hold/drop)
+getUserMedia (after click) → <video>
+  → PoseLandmarker.detectForVideo (GPU, CPU fallback; adaptive rate) → x, y, z per landmark
+  → image-left/right mapping → LandmarkSmoother (One Euro on x/y/z + confidence hold/drop)
   → hips estimated if out of frame → user fit adjustments
-  → computeGarmentLayout (torso quad + sleeve placements)
-  → renderGarment: sleeves (rigid, rotated about the shoulder seam), torso (4×6 bilinear grid of affine triangles),
-    sleeves drawn over the torso when an arm crosses in front
-  → opacity fades with tracking state → same canvas feeds capture (toBlob) and recording (captureStream + MediaRecorder)
+  → BodyFrame3D (scene px: +y up, +z toward camera; depth clamped to plausible ranges)
+  → buildBodyModel: torso frame (across/up/forward), elliptic torso collider, arm capsules, head
+  → GarmentCloth.step (packages/shared/src/cloth.ts):
+       Verlet integration (gravity, damping) → spring "skinning" toward the rest shape
+       (pinned shoulder line, loose hem) → PBD stretch/shear/bend constraints
+       → torso + capsule collisions; snaps instead of whipping after tracking jumps
+  → ClothRenderer (apps/web/src/mirror/renderer3d.ts, Three.js):
+       orthographic camera 1:1 with video pixels, video texture as background,
+       depth-only occluders (arms, hands, head) drawn first, textured cloth meshes
+       (front = product photo with orthographic sin θ mapping, back = matched colour),
+       hemisphere + key + fill lights adapted to frame luminance
+  → same canvas (preserveDrawingBuffer) feeds capture and recording
 ```
-The canvas holds the true camera orientation. "Mirror view" is a CSS flip, and captures honor it.
+`FlatRenderer` (2D piecewise-affine mesh) implements the same `MirrorRenderer` interface and is used when WebGL is unavailable or the user picks "Flat (fast)". The engine swaps renderers without restarting the camera.
 
 ### Deal intelligence
 `matchProducts()` (shared) returns `exact | similar | mismatch` with evidence:
@@ -96,7 +104,7 @@ See `apps/api/migrations/0001_init.sql`. Conventions: UUID primary keys, ISO-860
 | Jobs | Poll-on-read plus cron reconciliation | Works on the free plan without paid queues; idempotent and claim-guarded |
 | Auth | Email + PBKDF2 password, opaque session tokens (hashed at rest) | No third-party dependency; sessions can be revoked |
 | Media access | HMAC-signed, expiring URLs | Works in `<img>`, `<video>` and for providers without exposing tokens |
-| Live fitting | MediaPipe Pose + 2D deformable mesh on canvas | Runs on-device in real time on ordinary laptops; private |
+| Live fitting | MediaPipe Pose + 3D body model + PBD cloth simulation in Three.js (2D mesh fallback) | Real-time, on-device, private; garments drape and move physically |
 | Photo fitting | Specialized hosted try-on (FASHN) behind an adapter | Best quality per engineering hour; swappable |
 | Extension build | esbuild (IIFE content script, ESM worker) | Simple, fast, MV3-compatible |
 | Web build | Vite + React SPA | Static hosting on Pages; code-split routes |
@@ -105,7 +113,7 @@ See `apps/api/migrations/0001_init.sql`. Conventions: UUID primary keys, ISO-860
 
 - Move pose inference into a Web Worker with OffscreenCanvas
 - Segmentation-based occlusion for hair and hands
-- Rigged 3D garments and cloth simulation for premium items
+- Garment-specific 3D patterns (collars, hoods, pockets) and per-fabric physics presets
 - Neural video refinement as an optional "Neural Studio" mode
 - Size Confidence Engine (manufacturer size charts plus user measurements, with uncertainty)
 - Multi-garment outfits with layering

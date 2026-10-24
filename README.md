@@ -15,7 +15,7 @@
 
 - **Smart Fashion Selector:** activate on any tab (toolbar, `Alt+Shift+F` or right-click an image). FitLens reads the store's schema.org Product data, then Open Graph tags, then the nearby product card, and records the selected **variant** (color, size, GTIN, style number).
 - **PrecisionFit photo try-on:** an on-device photo check (resolution, exposure, blur and a MediaPipe person count) runs before upload. You consent explicitly before anything goes to the try-on provider. The provider adapter is vendor-neutral and ships with FASHN. Jobs are idempotent, polled, and expire if they stall. Results are copied to private storage and come with honest warnings.
-- **LiveMirror:** MediaPipe Pose runs in the browser. Landmarks are smoothed with a confidence-aware One Euro filter, the torso is drawn as a piecewise-affine mesh, and sleeves are rigid parts that follow the upper arm. The engine estimates hips when they're out of frame, fades the garment out when tracking is lost, and lowers the inference rate on slow devices. Camera frames never leave the device.
+- **LiveMirror (3D cloth simulation):** MediaPipe Pose runs in the browser and drives a 3D body model built from its depth estimates (an elliptical torso collider, arm capsules and head and hand occluders). The garment is a simulated cloth mesh: a torso tube plus sleeve tubes, using position-based dynamics with gravity, inertia, stretch, shear and bend constraints, and collisions. It's rendered with Three.js and lit to match the room's brightness, so it drapes, sways and settles as you move, and your arms and head pass in front of it. Product photos are turned into fabric textures automatically, with the front from the photo, sleeves straightened along their axis, and a matching colour for the back. A flat 2D mode remains as a fallback for devices without WebGL. Camera frames never leave the device.
 - **Snap & Reel Studio:** capture photos and record clips (with optional microphone) from the same canvas you see, and check that each clip plays back. Wardrobe looks can be turned into on-device 1080×1920 reels.
 - **Deal Intelligence:** an offer counts as an *exact* match only if the GTIN matches, or the brand and style number match with no color or size conflict. Lookalikes are shown separately and never recommended. Totals include known shipping, and every offer shows its source and when it was checked. Sources are authorized retailer feeds (admin ingestion API) and, optionally, SerpApi Google Shopping.
 - **Reviews:** matched by product identifier, each linked to its source. Summaries come from Workers AI, cite the reviews they use, and treat review text as untrusted input.
@@ -39,7 +39,7 @@ npm run dev:extension  # then load apps/extension/dist as an unpacked extension
 
 ```bash
 npm run typecheck        # all workspaces
-npm test                 # 60 unit tests (shared core + API security)
+npm test                 # 68 unit tests (incl. cloth physics) (shared core + API security)
 npm run test:integration # 21-step API test against a real local Worker, D1 and R2
 npm run test:e2e         # Playwright: studio journey, quality gate, live mirror with a fake camera, extension
 ```

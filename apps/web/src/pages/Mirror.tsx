@@ -8,6 +8,9 @@ import { useAuth } from "../lib/auth";
 import { canvasToBlob, downloadBlob, loadBitmap } from "../lib/image";
 import { DEFAULT_ADJUSTMENTS, MirrorEngine, type FitAdjustments, type MirrorStatus } from "../mirror/engine";
 import { prepareGarment, type PreparedGarment } from "../mirror/garment";
+import { FlatRenderer } from "../mirror/renderer2d";
+import { ClothRenderer } from "../mirror/renderer3d";
+import type { MirrorRenderer } from "../mirror/types";
 import { CanvasRecorder, MAX_RECORDING_SECONDS, validatePlayback } from "../mirror/recorder";
 
 const SAMPLES: { label: string; url: string; category: GarmentCategory }[] = [
@@ -25,7 +28,9 @@ interface Clip {
 export default function Mirror() {
   const { user } = useAuth();
   const [params] = useSearchParams();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvas3dRef = useRef<HTMLCanvasElement>(null);
+  const canvas2dRef = useRef<HTMLCanvasElement>(null);
+  const renderersRef = useRef<Partial<Record<MirrorRenderer["kind"], MirrorRenderer>>>({});
   const videoRef = useRef<HTMLVideoElement>(null);
   const engineRef = useRef<MirrorEngine | null>(null);
   const recorderRef = useRef<CanvasRecorder | null>(null);
@@ -40,6 +45,7 @@ export default function Mirror() {
   const [adjust, setAdjust] = useState<FitAdjustments>({ ...DEFAULT_ADJUSTMENTS });
   const [mirrored, setMirrored] = useState(true);
   const [skeleton, setSkeleton] = useState(false);
+  const [mode, setMode] = useState<MirrorRenderer["kind"]>(() => (ClothRenderer.isSupported() ? "cloth3d" : "flat"));
   const [withAudio, setWithAudio] = useState(false);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -84,8 +90,22 @@ export default function Mirror() {
   }, [adjust]);
 
   useEffect(() => {
-    if (engineRef.current) engineRef.current.showSkeleton = skeleton;
+    if (engineRef.current) engineRef.current.showBodyModel = skeleton;
   }, [skeleton]);
+
+  const getRenderer = useCallback((kind: MirrorRenderer["kind"]): MirrorRenderer => {
+    const cache = renderersRef.current;
+    if (!cache[kind]) cache[kind] = kind === "cloth3d" ? new ClothRenderer(canvas3dRef.current!) : new FlatRenderer(canvas2dRef.current!);
+    return cache[kind]!;
+  }, []);
+
+  // Switch between 3D cloth simulation and the flat 2D renderer without restarting the camera.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || engine.rendererKind === mode) return;
+    engine.setRenderer(getRenderer(mode));
+    recorderRef.current = new CanvasRecorder(engine.canvas);
+  }, [mode, getRenderer]);
 
   // Stop the camera when leaving the page or hiding the tab.
   useEffect(() => {
@@ -97,6 +117,8 @@ export default function Mirror() {
     return () => {
       document.removeEventListener("visibilitychange", onVis);
       engineRef.current?.stop();
+      Object.values(renderersRef.current).forEach((r) => r?.dispose());
+      renderersRef.current = {};
     };
   }, []);
 
@@ -107,17 +129,26 @@ export default function Mirror() {
   }, [recording]);
 
   const start = async (deviceId?: string) => {
-    if (!canvasRef.current || !videoRef.current) return;
+    if (!canvas3dRef.current || !canvas2dRef.current || !videoRef.current) return;
     setError(null);
     setStarting(true);
     try {
-      const engine = engineRef.current ?? new MirrorEngine(canvasRef.current, videoRef.current, setStatus);
+      let renderer: MirrorRenderer;
+      try {
+        renderer = getRenderer(mode);
+      } catch {
+        // WebGL unavailable or context lost: fall back to the flat renderer.
+        renderer = getRenderer("flat");
+        setMode("flat");
+      }
+      const engine = engineRef.current ?? new MirrorEngine(renderer, videoRef.current, setStatus);
       engineRef.current = engine;
+      engine.setRenderer(renderer);
       engine.adjustments = adjust;
-      engine.showSkeleton = skeleton;
+      engine.showBodyModel = skeleton;
       engine.setGarment(garment?.prepared ?? null, garment?.category ?? "top");
       await engine.start(deviceId || undefined);
-      recorderRef.current = new CanvasRecorder(canvasRef.current);
+      recorderRef.current = new CanvasRecorder(engine.canvas);
       setRunning(true);
       setCameras(await MirrorEngine.listCameras());
     } catch (e) {
@@ -141,7 +172,7 @@ export default function Mirror() {
   };
 
   const capture = async () => {
-    const c = canvasRef.current;
+    const c = engineRef.current?.canvas;
     if (!c) return;
     let source: HTMLCanvasElement = c;
     if (mirrored) {
@@ -221,7 +252,8 @@ export default function Mirror() {
       <div className="grid-2" style={{ gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1fr)" }}>
         <div className="stack">
           <div className="mirror-stage">
-            <canvas ref={canvasRef} className={mirrored ? "mirrored" : ""} aria-label="Live mirror preview" />
+            <canvas ref={canvas3dRef} hidden={mode !== "cloth3d"} className={mirrored ? "mirrored" : ""} aria-label="Live mirror preview (3D cloth)" />
+            <canvas ref={canvas2dRef} hidden={mode !== "flat"} className={mirrored ? "mirrored" : ""} aria-label="Live mirror preview (flat)" />
             <video ref={videoRef} hidden muted playsInline />
             {!running && (
               <div className="mirror-empty">
@@ -315,6 +347,16 @@ export default function Mirror() {
           </section>
 
           <section className="card stack">
+            <h3>Rendering</h3>
+            <div className="row" role="radiogroup" aria-label="Rendering mode">
+              <button role="radio" aria-checked={mode === "cloth3d"} className={`btn btn-sm ${mode === "cloth3d" ? "btn-primary" : "btn-secondary"}`} disabled={recording || !ClothRenderer.isSupported()} onClick={() => setMode("cloth3d")}>3D cloth</button>
+              <button role="radio" aria-checked={mode === "flat"} className={`btn btn-sm ${mode === "flat" ? "btn-primary" : "btn-secondary"}`} disabled={recording} onClick={() => setMode("flat")}>Flat (fast)</button>
+            </div>
+            <p className="muted small" style={{ margin: 0 }}>
+              {mode === "cloth3d"
+                ? "Simulated fabric in 3D: drapes with gravity, sways as you move, and your arms and head pass in front of it."
+                : "A lightweight 2D overlay for older or slower devices."}
+            </p>
             <h3>Adjust fit</h3>
             {([
               ["size", "Size", 0.8, 1.25, 0.01],
@@ -330,7 +372,7 @@ export default function Mirror() {
             <div className="row">
               <button className="btn btn-ghost btn-sm" onClick={() => setAdjust({ ...DEFAULT_ADJUSTMENTS })}>Reset</button>
               <label className="check" style={{ alignItems: "center" }}><input type="checkbox" checked={mirrored} onChange={(e) => setMirrored(e.target.checked)} /> Mirror view</label>
-              <label className="check" style={{ alignItems: "center" }}><input type="checkbox" checked={skeleton} onChange={(e) => setSkeleton(e.target.checked)} /> Show tracking</label>
+              <label className="check" style={{ alignItems: "center" }}><input type="checkbox" checked={skeleton} onChange={(e) => setSkeleton(e.target.checked)} /> Show body model</label>
             </div>
             {cameras.length > 1 && (
               <div className="field">

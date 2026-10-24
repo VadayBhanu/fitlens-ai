@@ -48,6 +48,8 @@ export class OneEuroFilter {
 export interface Point2D {
   x: number;
   y: number;
+  /** Optional relative depth (same units as x; smaller = closer to the camera). */
+  z?: number;
 }
 
 export interface TrackedPoint extends Point2D {
@@ -62,6 +64,7 @@ export interface TrackedPoint extends Point2D {
 export class LandmarkSmoother<K extends string> {
   private readonly fx = new Map<K, OneEuroFilter>();
   private readonly fy = new Map<K, OneEuroFilter>();
+  private readonly fz = new Map<K, OneEuroFilter>();
   private readonly last = new Map<K, { p: Point2D; t: number }>();
 
   constructor(
@@ -79,8 +82,11 @@ export class LandmarkSmoother<K extends string> {
         if (!this.fx.has(key)) {
           this.fx.set(key, new OneEuroFilter(this.minCutoff, this.beta));
           this.fy.set(key, new OneEuroFilter(this.minCutoff, this.beta));
+          // Depth from monocular pose is noisier than x/y: smooth it harder.
+          this.fz.set(key, new OneEuroFilter(this.minCutoff * 0.5, this.beta * 0.5));
         }
-        const s = { x: this.fx.get(key)!.filter(p.x, timestampMs), y: this.fy.get(key)!.filter(p.y, timestampMs) };
+        const s: Point2D = { x: this.fx.get(key)!.filter(p.x, timestampMs), y: this.fy.get(key)!.filter(p.y, timestampMs) };
+        if (p.z !== undefined) s.z = this.fz.get(key)!.filter(p.z, timestampMs);
         this.last.set(key, { p: s, t: timestampMs });
         out[key] = s;
       } else {
@@ -90,6 +96,7 @@ export class LandmarkSmoother<K extends string> {
         } else {
           this.fx.get(key)?.reset();
           this.fy.get(key)?.reset();
+          this.fz.get(key)?.reset();
           this.last.delete(key);
         }
       }
@@ -100,6 +107,7 @@ export class LandmarkSmoother<K extends string> {
   reset(): void {
     this.fx.clear();
     this.fy.clear();
+    this.fz.clear();
     this.last.clear();
   }
 }

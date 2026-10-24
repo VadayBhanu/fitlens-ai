@@ -6,3 +6,4 @@ export * from "./geometry";
 export * from "./extraction";
 export * from "./quality";
 export * from "./errors";
+export * from "./cloth";

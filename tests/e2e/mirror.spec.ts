@@ -5,6 +5,7 @@ test("live mirror tracks a person from the camera, captures a photo and records 
   test.setTimeout(180_000);
   await page.goto("/mirror");
   await expect(page.getByText("Background removed automatically").or(page.getByText("Transparent image"))).toBeVisible();
+  await expect(page.getByRole("radio", { name: "3D cloth" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "Start Live Mirror" }).click();
   await expect(page.locator(".hud-pill").first()).toBeVisible({ timeout: 30_000 });
   // The fake camera shows a person — tracking should lock on.
@@ -12,9 +13,15 @@ test("live mirror tracks a person from the camera, captures a photo and records 
 
   // The garment must actually be composited: compare the rendered canvas with the raw camera frame.
   const changedPixels = await page.evaluate(() => {
-    const c = document.querySelector<HTMLCanvasElement>(".mirror-stage canvas")!;
+    const c = document.querySelector<HTMLCanvasElement>(".mirror-stage canvas:not([hidden])")!;
     const v = document.querySelector<HTMLVideoElement>(".mirror-stage video")!;
-    const rendered = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    // The 3D renderer draws with WebGL; copy its (preserved) frame into a 2D canvas to read pixels.
+    const copy = document.createElement("canvas");
+    copy.width = c.width;
+    copy.height = c.height;
+    const cctx = copy.getContext("2d")!;
+    cctx.drawImage(c, 0, 0);
+    const rendered = cctx.getImageData(0, 0, c.width, c.height).data;
     const raw = document.createElement("canvas");
     raw.width = c.width;
     raw.height = c.height;
@@ -32,6 +39,16 @@ test("live mirror tracks a person from the camera, captures a photo and records 
   expect(changedPixels).toBeGreaterThan(0.02);
   await testInfo.attach("mirror-frame", { body: await page.locator(".mirror-stage").screenshot(), contentType: "image/png" });
   if (process.env.MIRROR_SCREENSHOT) await page.locator(".mirror-stage").screenshot({ path: process.env.MIRROR_SCREENSHOT });
+
+  // Switching to the flat renderer keeps the camera running.
+  await page.getByRole("radio", { name: "Flat (fast)" }).click();
+  await expect(page.locator(".mirror-stage canvas:not([hidden])")).toHaveAttribute("aria-label", /flat/);
+  if (process.env.MIRROR_SCREENSHOT) {
+    await page.waitForTimeout(1500);
+    await page.locator(".mirror-stage").screenshot({ path: process.env.MIRROR_SCREENSHOT.replace(".png", "-flat.png") });
+  }
+  await page.getByRole("radio", { name: "3D cloth" }).click();
+  await expect(page.locator(".mirror-stage canvas:not([hidden])")).toHaveAttribute("aria-label", /3D/);
 
   await page.getByRole("button", { name: "Capture photo" }).click();
   await expect(page.getByRole("img", { name: "Captured outfit" })).toBeVisible();

@@ -66,6 +66,8 @@ export interface GarmentAnchors {
   /** Centre of each sleeve's cuff; with the shoulder seam it defines the sleeve's rest direction. */
   leftCuff: Point2D;
   rightCuff: Point2D;
+  /** Height (fraction) where the sleeve meets the body at the armpit. */
+  armpitY: number;
 }
 
 export const DEFAULT_ANCHORS: Record<"top" | "outerwear" | "dress", GarmentAnchors> = {
@@ -77,7 +79,8 @@ export const DEFAULT_ANCHORS: Record<"top" | "outerwear" | "dress", GarmentAncho
     leftSleeveCut: 0.235,
     rightSleeveCut: 0.765,
     leftCuff: { x: 0.07, y: 0.33 },
-    rightCuff: { x: 0.93, y: 0.33 }
+    rightCuff: { x: 0.93, y: 0.33 },
+    armpitY: 0.25
   },
   outerwear: {
     leftShoulder: { x: 0.22, y: 0.05 },
@@ -87,7 +90,8 @@ export const DEFAULT_ANCHORS: Record<"top" | "outerwear" | "dress", GarmentAncho
     leftSleeveCut: 0.235,
     rightSleeveCut: 0.765,
     leftCuff: { x: 0.08, y: 0.79 },
-    rightCuff: { x: 0.92, y: 0.79 }
+    rightCuff: { x: 0.92, y: 0.79 },
+    armpitY: 0.34
   },
   dress: {
     leftShoulder: { x: 0.3, y: 0.04 },
@@ -97,7 +101,8 @@ export const DEFAULT_ANCHORS: Record<"top" | "outerwear" | "dress", GarmentAncho
     leftSleeveCut: 0.24,
     rightSleeveCut: 0.76,
     leftCuff: { x: 0.12, y: 0.2 },
-    rightCuff: { x: 0.88, y: 0.2 }
+    rightCuff: { x: 0.88, y: 0.2 },
+    armpitY: 0.18
   }
 };
 

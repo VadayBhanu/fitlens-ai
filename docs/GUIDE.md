@@ -420,6 +420,8 @@ npx wrangler d1 execute fitlens --remote --command "DELETE FROM catalog_items WH
 | Try-on fails with "isn't configured" | Set `FASHN_API_KEY` with `wrangler secret put` and redeploy. |
 | Try-on fails with a provider error | Check your FASHN credit balance. Failed predictions don't use credits. Retry from the result panel. |
 | Live Mirror says camera permission denied | Allow the camera for the site (lock icon in the address bar). The mirror needs HTTPS or localhost. |
+| Clothes don't fit your body well in the Live Mirror | Click **Recalibrate** (Adjust fit → Body profile). Stand facing the camera with your whole face, shoulders and hips in view and your arms slightly out, and hold still for the countdown. Use **Size / Width / Length / Position** for fine-tuning. |
+| Photo check says it couldn't detect a person | Use a photo where your face and upper body are clearly visible. If it's a good photo, tick **"Yes, this photo shows me"** to continue. |
 | Live Mirror is slow | The engine lowers its inference rate automatically. Close other GPU-heavy tabs, use better lighting, and step back so your shoulders and hips are visible. |
 | `wrangler dev` fails with "CLOUDFLARE_API_TOKEN required" | The `[ai]` binding needs a Cloudflare login even locally. Run `npx wrangler login` or keep `[ai]` commented out. |
 | Deploy workflow skipped | Set the repository variable `DEPLOY_ENABLED=true`. |

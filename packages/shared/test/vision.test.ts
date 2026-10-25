@@ -81,6 +81,13 @@ describe("photo quality", () => {
     const s = computeImageStats(img(64, 64, (x, y) => ((x + y) % 2 ? 200 : 90)), 64, 64, 1000, 1400);
     expect(assessPersonPhoto(s, 1).ok).toBe(true);
   });
+  it("asks for confirmation instead of blocking when no person is detected", () => {
+    const s = { width: 1000, height: 1400, brightness: 128, sharpness: 500 };
+    const q = assessPersonPhoto(s, 0);
+    expect(q.ok).toBe(true);
+    expect(q.personNotDetected).toBe(true);
+    expect(q.warnings.join(" ")).toMatch(/couldn't clearly detect/);
+  });
   it("blocks multiple people", () => {
     const s = { width: 1000, height: 1400, brightness: 128, sharpness: 500 };
     expect(assessPersonPhoto(s, 2).ok).toBe(false);

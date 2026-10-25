@@ -42,6 +42,11 @@ export interface QualityAssessment {
   ok: boolean;
   blocking: string[];
   warnings: string[];
+  /**
+   * On-device detection found nobody. Not blocking on its own — detection can
+   * miss people in unusual photos — so the UI asks the user to confirm.
+   */
+  personNotDetected: boolean;
 }
 
 export function assessPersonPhoto(stats: ImageStats, people?: number): QualityAssessment {
@@ -55,8 +60,9 @@ export function assessPersonPhoto(stats: ImageStats, people?: number): QualityAs
   if (stats.brightness > 235) blocking.push("Photo is overexposed.");
   if (stats.sharpness < 25) blocking.push("Photo looks blurry. Hold the camera steady or use a sharper photo.");
   else if (stats.sharpness < 60) warnings.push("Photo may be slightly blurry.");
-  if (people === 0) blocking.push("We couldn't find a person in this photo. Use a photo showing your upper body.");
+  const personNotDetected = people === 0;
+  if (personNotDetected) warnings.push("We couldn't clearly detect a person. Make sure your face and upper body are visible.");
   if (people !== undefined && people > 1) blocking.push("Several people detected. Use a photo with only you in it.");
   if (stats.width > stats.height * 1.3) warnings.push("Portrait (vertical) photos usually work best.");
-  return { ok: blocking.length === 0, blocking, warnings };
+  return { ok: blocking.length === 0, blocking, warnings, personNotDetected };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildBodyModel, defaultSpec, GarmentCloth, v3, type BodyFrame3D } from "../src/cloth";
+import { buildBodyModel, defaultSpec, GarmentCloth, outlineHalfWidth, v3, type BodyFrame3D } from "../src/cloth";
+import { DEFAULT_PROFILE } from "../src/calibration";
 
 // Scene units are pixels: +y up, +z toward the camera.
 function frame(dx = 0, elbowAngle = 0): BodyFrame3D {
@@ -52,6 +53,34 @@ describe("body model", () => {
   });
 });
 
+describe("body outline from calibration", () => {
+  it("sizes the garment from the measured body, not the shoulder joints", () => {
+    const slim = buildBodyModel(frame(), { ...DEFAULT_PROFILE, chestRatio: 1.05, waistRatio: 0.9, hipRatio: 1.0 });
+    const broad = buildBodyModel(frame(), { ...DEFAULT_PROFILE, chestRatio: 1.5, waistRatio: 1.45, hipRatio: 1.5 });
+    expect(outlineHalfWidth(broad, 0.3)).toBeGreaterThan(outlineHalfWidth(slim, 0.3) * 1.3);
+    const ringWidth = (b: ReturnType<typeof buildBodyModel>) => {
+      const c = new GarmentCloth(defaultSpec("top"));
+      c.step(b, 1 / 30);
+      const row = Math.round((c.torso.rings - 1) * 0.4);
+      let min = Infinity, max = -Infinity;
+      for (let i = 0; i < c.torso.segments; i++) {
+        const x = c.torso.position(c.torso.index(row, i)).x;
+        min = Math.min(min, x);
+        max = Math.max(max, x);
+      }
+      return max - min;
+    };
+    // Default body (chest 1.22 × shoulder-joint width): garment is wider than the joints.
+    expect(ringWidth(buildBodyModel(frame()))).toBeGreaterThan(200 * 1.2);
+    expect(ringWidth(broad)).toBeGreaterThan(ringWidth(slim) * 1.25);
+  });
+  it("uses calibrated arm lengths for untracked arms", () => {
+    const { elbowL: _a, elbowR: _b, wristL: _c, wristR: _d, ...noArms } = frame();
+    const b = buildBodyModel(noArms, { ...DEFAULT_PROFILE, upperArmRatio: 1.0 });
+    expect(v3.dist(b.armL[0]!, b.armL[1]!)).toBeCloseTo(200, 0);
+  });
+});
+
 describe("garment cloth simulation", () => {
   it("snaps to the rest shape on the first frame and stays stable at rest", () => {
     const c = new GarmentCloth(defaultSpec("top"));
@@ -86,9 +115,10 @@ describe("garment cloth simulation", () => {
       if (y < 0 || y > body.torsoLength * 0.85) continue; // armpit area is shaped by the arm colliders
       const x = v3.dot(d, body.across);
       const z = v3.dot(d, body.forward);
-      const t = y / body.torsoLength;
-      const A = body.hipWidth * 0.5 * 1.15 + (body.shoulderWidth * 0.42 - body.hipWidth * 0.5 * 1.15) * t;
-      if ((x * x) / (A * A) + (z * z) / (A * 0.55 * (A * 0.55)) < 0.97) inside++;
+      const t = 1 - y / body.torsoLength;
+      if (t < 0.15) continue; // tapered near the arm joints
+      const A = outlineHalfWidth(body, t) * 0.97;
+      if ((x * x) / (A * A) + (z * z) / (A * 0.6 * (A * 0.6)) < 0.97) inside++;
     }
     expect(inside).toBe(0);
   });
@@ -96,11 +126,11 @@ describe("garment cloth simulation", () => {
   it("makes the hem lag behind fast motion, then settle", () => {
     const c = new GarmentCloth(defaultSpec("top"));
     for (let i = 0; i < 30; i++) c.step(buildBodyModel(frame(0)), 1 / 30);
-    const hemIndex = c.torso.index(c.torso.rings - 1, 0);
+    const hemIndex = c.torso.index(c.torso.rings - 1, c.torso.segments / 4); // front-centre hem
     let lag = 0;
     for (let i = 1; i <= 10; i++) {
       c.step(buildBodyModel(frame(i * 8)), 1 / 30); // moving right at 240 px/s
-      lag = c.torso.target(hemIndex).x - c.torso.position(hemIndex).x;
+      lag = Math.max(lag, c.torso.target(hemIndex).x - c.torso.position(hemIndex).x);
     }
     expect(lag).toBeGreaterThan(2); // hem trails the body
     for (let i = 0; i < 90; i++) c.step(buildBodyModel(frame(80)), 1 / 30);

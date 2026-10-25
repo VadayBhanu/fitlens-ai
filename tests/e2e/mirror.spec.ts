@@ -7,6 +7,14 @@ test("live mirror tracks a person from the camera, captures a photo and records 
   await expect(page.getByText("Background removed automatically").or(page.getByText("Transparent image"))).toBeVisible();
   await expect(page.getByRole("radio", { name: "3D cloth" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "Start Live Mirror" }).click();
+  // First run: guided body calibration with a live checklist.
+  await expect(page.getByRole("heading", { name: "Body calibration" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".calib-list li")).toHaveCount(8, { timeout: 30_000 });
+  await expect(page.locator(".calib-list li.ok").first()).toBeVisible({ timeout: 30_000 }); // e.g. face/shoulders detected
+  // The fixture is a side-on yoga pose, which can't pass "facing the camera": use typical proportions.
+  await page.getByRole("button", { name: "Skip (use typical proportions)" }).click();
+  await expect(page.getByRole("heading", { name: "Body calibration" })).toHaveCount(0);
+  await expect(page.getByText("Not calibrated — using typical proportions.")).toBeVisible();
   await expect(page.locator(".hud-pill").first()).toBeVisible({ timeout: 30_000 });
   // The fake camera shows a person — tracking should lock on.
   await expect(page.locator(".hud-pill").first()).toHaveText(/Tracking|Partial/, { timeout: 30_000 });

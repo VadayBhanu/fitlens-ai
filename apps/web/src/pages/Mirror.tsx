@@ -1,10 +1,12 @@
-import { inferCategory, type GarmentCategory } from "@fitlens/shared";
+import { DEFAULT_PROFILE, inferCategory, type BodyProfile, type CalibrationProgress, type GarmentCategory } from "@fitlens/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { CalibrationChecklist, CalibrationOverlay } from "../components/CalibrationGuide";
 import { PhotoInput } from "../components/PhotoInput";
 import { Notice, Spinner } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { clearProfile, loadProfile, saveProfile } from "../lib/bodyProfile";
 import { canvasToBlob, downloadBlob, loadBitmap } from "../lib/image";
 import { DEFAULT_ADJUSTMENTS, MirrorEngine, type FitAdjustments, type MirrorStatus } from "../mirror/engine";
 import { prepareGarment, type PreparedGarment } from "../mirror/garment";
@@ -51,6 +53,12 @@ export default function Mirror() {
   const [elapsed, setElapsed] = useState(0);
   const [clip, setClip] = useState<Clip | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [profile, setProfile] = useState<BodyProfile | null>(() => loadProfile());
+  const [calibrating, setCalibrating] = useState(false);
+  const [calib, setCalib] = useState<CalibrationProgress | null>(null);
+  const [requireHips, setRequireHips] = useState(true);
+  const [justCalibrated, setJustCalibrated] = useState(false);
+  const calibStartRef = useRef(0);
 
   const loadGarment = useCallback(async (src: Blob | string, label: string, category: GarmentCategory) => {
     setError(null);
@@ -128,6 +136,42 @@ export default function Mirror() {
     return () => clearInterval(id);
   }, [recording]);
 
+  const beginCalibration = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    setCalib(null);
+    setJustCalibrated(false);
+    setRequireHips(true);
+    calibStartRef.current = Date.now();
+    setCalibrating(true);
+    engine.onCalibration = (p) => {
+      setCalib(p);
+      if (p.profile) {
+        saveProfile(p.profile);
+        setProfile(p.profile);
+        setCalibrating(false);
+        setJustCalibrated(true);
+      }
+    };
+    await engine.startCalibration(true);
+  }, []);
+
+  const skipCalibration = () => {
+    engineRef.current?.finishCalibration();
+    setCalibrating(false);
+  };
+
+  const calibrateWithoutHips = () => {
+    setRequireHips(false);
+    engineRef.current?.setRequireHips(false);
+  };
+
+  const forgetProfile = () => {
+    clearProfile();
+    setProfile(null);
+    if (engineRef.current) engineRef.current.profile = DEFAULT_PROFILE;
+  };
+
   const start = async (deviceId?: string) => {
     if (!canvas3dRef.current || !canvas2dRef.current || !videoRef.current) return;
     setError(null);
@@ -147,10 +191,13 @@ export default function Mirror() {
       engine.adjustments = adjust;
       engine.showBodyModel = skeleton;
       engine.setGarment(garment?.prepared ?? null, garment?.category ?? "top");
+      engine.profile = profile ?? DEFAULT_PROFILE;
       await engine.start(deviceId || undefined);
       recorderRef.current = new CanvasRecorder(engine.canvas);
       setRunning(true);
       setCameras(await MirrorEngine.listCameras());
+      // First time: guide the user through body calibration for an accurate fit.
+      if (!profile && !engine.calibrating) await beginCalibration();
     } catch (e) {
       const err = e as Error;
       setError(
@@ -166,6 +213,8 @@ export default function Mirror() {
   };
 
   const stop = () => {
+    engineRef.current?.finishCalibration();
+    setCalibrating(false);
     engineRef.current?.stop();
     setRunning(false);
     setStatus(null);
@@ -236,7 +285,9 @@ export default function Mirror() {
     }
   };
 
-  const stateDot = status?.state === "tracking" ? "ok" : status?.state === "partial" ? "" : "bad";
+  const stateDot = status?.state === "tracking" ? "ok" : status?.state === "partial" || status?.state === "face-hidden" ? "" : "bad";
+  const hipsMissing = calibrating && requireHips && calib?.checks.find((c) => c.id === "hips")?.ok === false && Date.now() - calibStartRef.current > 6000;
+  const stateLabel: Record<string, string> = { tracking: "Tracking", partial: "Partial", "face-hidden": "Face hidden", calibrating: "Calibrating" };
 
   return (
     <div className="container stack" style={{ gap: 20 }}>
@@ -268,12 +319,17 @@ export default function Mirror() {
             {running && status && (
               <>
                 <div className="mirror-hud">
-                  <span className="hud-pill"><span className={`dot ${stateDot}`} />{status.state === "tracking" ? "Tracking" : status.state === "partial" ? "Partial" : "Searching"}</span>
+                  <span className="hud-pill"><span className={`dot ${calibrating ? (calib?.allOk ? "ok" : "") : stateDot}`} />{calibrating ? "Calibrating" : (stateLabel[status.state] ?? "Searching")}</span>
                   <span className="hud-pill">{status.fps} fps · {status.inferenceMs} ms{recording && <> · <span className="record-dot" /> {elapsed}s / {MAX_RECORDING_SECONDS}s</>}</span>
                 </div>
-                {status.state !== "tracking" && <div className="mirror-guide">{status.message}</div>}
+                {calibrating ? (
+                  <div className="mirror-guide">{calib?.instruction ?? "Stand back so your face, shoulders and hips are in view."}</div>
+                ) : (
+                  status.state !== "tracking" && <div className="mirror-guide">{status.message}</div>
+                )}
               </>
             )}
+            {running && calibrating && <CalibrationOverlay progress={calib} />}
           </div>
           {running && (
             <div className="row">
@@ -308,6 +364,29 @@ export default function Mirror() {
         </div>
 
         <div className="stack">
+          {running && calibrating && (
+            <section className="card stack" aria-live="polite">
+              <div className="row between">
+                <h3>Body calibration</h3>
+                <span className="badge badge-iris">Stays on this device</span>
+              </div>
+              <p className="muted small" style={{ margin: 0 }}>
+                Line up with the outline: whole face visible, shoulders and hips in view, facing the camera, arms slightly out. Hold still for the countdown and we'll measure
+                your shoulders, chest, waist and hips so clothes fit your body.
+              </p>
+              <CalibrationChecklist progress={calib} />
+              <div className="row">
+                {hipsMissing && <button className="btn btn-secondary btn-sm" onClick={calibrateWithoutHips}>My hips won't fit in view</button>}
+                <button className="btn btn-ghost btn-sm" onClick={skipCalibration}>Skip (use typical proportions)</button>
+              </div>
+              {!requireHips && <span className="muted small">Calibrating without hips: torso length and hip width will be estimated.</span>}
+            </section>
+          )}
+          {justCalibrated && profile && !calibrating && (
+            <Notice kind="success" title="Calibrated — the garment now fits your measured body">
+              {profile.measuredOutline ? "Chest, waist and hip widths were measured from your outline." : "Proportions measured; body outline estimated (try again with your arms slightly out for a closer fit)."}
+            </Notice>
+          )}
           <section className="card stack">
             <h3>Garment</h3>
             {garment ? (
@@ -373,6 +452,16 @@ export default function Mirror() {
               <button className="btn btn-ghost btn-sm" onClick={() => setAdjust({ ...DEFAULT_ADJUSTMENTS })}>Reset</button>
               <label className="check" style={{ alignItems: "center" }}><input type="checkbox" checked={mirrored} onChange={(e) => setMirrored(e.target.checked)} /> Mirror view</label>
               <label className="check" style={{ alignItems: "center" }}><input type="checkbox" checked={skeleton} onChange={(e) => setSkeleton(e.target.checked)} /> Show body model</label>
+            </div>
+            <h3>Body profile</h3>
+            <p className="muted small" style={{ margin: 0 }}>
+              {profile
+                ? `Calibrated ${new Date(profile.calibratedAt).toLocaleDateString()} · ${profile.measuredOutline ? "outline measured" : "outline estimated"}${profile.hipsMeasured ? "" : " · hips estimated"}`
+                : "Not calibrated — using typical proportions. Calibrate for a more accurate fit."}
+            </p>
+            <div className="row">
+              <button className="btn btn-secondary btn-sm" disabled={!running || calibrating || recording} onClick={() => void beginCalibration()}>{profile ? "Recalibrate" : "Calibrate my body"}</button>
+              {profile && <button className="btn btn-ghost btn-sm" onClick={forgetProfile} disabled={calibrating}>Forget profile</button>}
             </div>
             {cameras.length > 1 && (
               <div className="field">

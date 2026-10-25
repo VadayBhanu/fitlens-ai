@@ -1,4 +1,22 @@
-import { add, dist, LandmarkSmoother, mid, normalize, scale, sub, type GarmentCategory, type Point2D, type TrackedPoint, type UpperBody } from "@fitlens/shared";
+import {
+  add,
+  BodyCalibrator,
+  DEFAULT_PROFILE,
+  dist,
+  LandmarkSmoother,
+  mid,
+  normalize,
+  scale,
+  sub,
+  type BodyProfile,
+  type CalibLandmarks,
+  type CalibrationProgress,
+  type GarmentCategory,
+  type PersonMask,
+  type Point2D,
+  type TrackedPoint,
+  type UpperBody
+} from "@fitlens/shared";
 import type { PoseLandmarker } from "@mediapipe/tasks-vision";
 import { getPoseLandmarker, POSE } from "../lib/pose";
 import type { PreparedGarment } from "./garment";
@@ -6,7 +24,7 @@ import { DEFAULT_ADJUSTMENTS, type FitAdjustments, type MirrorRenderer, type Tra
 
 export { DEFAULT_ADJUSTMENTS, type FitAdjustments } from "./types";
 
-export type TrackingState = "initializing" | "searching" | "tracking" | "partial" | "multiple-people" | "too-close" | "paused";
+export type TrackingState = "initializing" | "calibrating" | "searching" | "tracking" | "partial" | "face-hidden" | "multiple-people" | "too-close" | "paused";
 
 export interface MirrorStatus {
   state: TrackingState;
@@ -20,6 +38,8 @@ type Key = "lShoulder" | "rShoulder" | "lElbow" | "rElbow" | "lHip" | "rHip" | "
 
 const MESSAGES: Record<TrackingState, string> = {
   initializing: "Starting camera and body tracking…",
+  calibrating: "Calibrating — follow the checklist.",
+  "face-hidden": "Keep your face in the frame so we can track your body accurately.",
   searching: "Step back so your head, shoulders and waist are in view.",
   tracking: "Tracking — move naturally. Best results facing the camera.",
   partial: "Hips aren't visible, so the hem position is estimated.",
@@ -53,6 +73,12 @@ export class MirrorEngine {
   private lastPose: TrackedPose | null = null;
   private lastState: TrackingState = "searching";
   private lastConfidence = 0;
+  private mode: "live" | "calibrating" = "live";
+  private calibrator = new BodyCalibrator();
+  private lastCalibEmit = 0;
+  private faceMissingSince: number | null = null;
+  onCalibration: ((p: CalibrationProgress) => void) | null = null;
+  profile: BodyProfile = DEFAULT_PROFILE;
   adjustments: FitAdjustments = { ...DEFAULT_ADJUSTMENTS };
   showGarment = true;
   showBodyModel = false;
@@ -96,10 +122,39 @@ export class MirrorEngine {
     this.video.playsInline = true;
     await this.video.play();
     this.renderer.resize(this.video.videoWidth || 1280, this.video.videoHeight || 720);
-    this.landmarker = await getPoseLandmarker("VIDEO", 2);
+    this.landmarker = await getPoseLandmarker({ mode: "VIDEO", numPoses: 2 });
     this.running = true;
     this.smoother.reset();
     this.loop();
+  }
+
+  get calibrating(): boolean {
+    return this.mode === "calibrating";
+  }
+
+  /**
+   * Guided calibration: the garment is hidden while the user lines up; a
+   * segmentation-enabled tracker measures their real body outline.
+   */
+  async startCalibration(requireHips = true): Promise<void> {
+    this.calibrator.reset();
+    this.calibrator.requireHips = requireHips;
+    // One tracker for everything: two GPU pose graphs on one page can starve
+    // each other, so segmentation output is switched on only while calibrating.
+    await this.landmarker?.setOptions({ outputSegmentationMasks: true });
+    this.mode = "calibrating";
+    this.emit("calibrating", 0, true);
+  }
+
+  setRequireHips(requireHips: boolean): void {
+    this.calibrator.requireHips = requireHips;
+  }
+
+  /** Leave calibration (keeping the current profile). */
+  finishCalibration(): void {
+    if (this.mode === "calibrating") void this.landmarker?.setOptions({ outputSegmentationMasks: false }).catch(() => undefined);
+    this.mode = "live";
+    this.smoother.reset();
   }
 
   setGarment(g: PreparedGarment | null, category: GarmentCategory): void {
@@ -144,6 +199,12 @@ export class MirrorEngine {
   };
 
   private frame(now: number): void {
+    if (this.mode === "calibrating" && this.landmarker) {
+      this.calibrate(now);
+      this.renderer.render({ video: this.video, pose: null, opacity: 0, adjustments: this.adjustments, timeMs: now, showBodyModel: false, profile: this.profile });
+      this.emit("calibrating", 0);
+      return;
+    }
     if (!this.landmarker) return;
     // Adaptive inference rate: on slow devices (no GPU), detect less often and
     // keep rendering with the last known pose so the preview stays responsive.
@@ -162,9 +223,55 @@ export class MirrorEngine {
       opacity: this.opacity,
       adjustments: this.adjustments,
       timeMs: now,
-      showBodyModel: this.showBodyModel
+      showBodyModel: this.showBodyModel,
+      profile: this.profile
     });
     this.emit(state, this.lastConfidence);
+  }
+
+  private calibrate(now: number): void {
+    const W = this.video.videoWidth || 1280;
+    const H = this.video.videoHeight || 720;
+    const result = this.landmarker!.detectForVideo(this.video, now);
+    const lm = result.landmarks[0];
+    const P = (i: number) => {
+      const l = lm?.[i];
+      return l ? { x: l.x * W, y: l.y * H, z: l.z * W, visibility: l.visibility ?? 0.9 } : undefined;
+    };
+    // Image-left = the person's right side (see detect()).
+    const landmarks: CalibLandmarks = {
+      nose: P(POSE.nose),
+      eyeL: P(POSE.rightEye),
+      eyeR: P(POSE.leftEye),
+      shoulderL: P(POSE.rightShoulder),
+      shoulderR: P(POSE.leftShoulder),
+      elbowL: P(POSE.rightElbow),
+      elbowR: P(POSE.leftElbow),
+      wristL: P(POSE.rightWrist),
+      wristR: P(POSE.leftWrist),
+      hipL: P(POSE.rightHip),
+      hipR: P(POSE.leftHip)
+    };
+    let mask: PersonMask | undefined;
+    const m = result.segmentationMasks?.[0];
+    try {
+      // Reading the mask back is costly, so only do it while collecting samples.
+      if (m && this.calibrator.wantsSamples) mask = { data: m.getAsFloat32Array().slice(), width: m.width, height: m.height, threshold: 0.5 };
+    } catch {
+      // Mask readback unsupported on this GPU: calibrate from landmarks (outline uses typical widths).
+      mask = undefined;
+    } finally {
+      result.segmentationMasks?.forEach((x) => x.close());
+    }
+    const progress = this.calibrator.update(landmarks, W, H, now, mask);
+    if (progress.profile) {
+      this.profile = progress.profile;
+      this.finishCalibration();
+    }
+    if (progress.profile || now - this.lastCalibEmit > 120) {
+      this.lastCalibEmit = now;
+      this.onCalibration?.(progress);
+    }
   }
 
   private detect(now: number): void {
@@ -172,6 +279,8 @@ export class MirrorEngine {
     const H = this.video.videoHeight || 720;
     const t0 = performance.now();
     const result = this.landmarker!.detectForVideo(this.video, now);
+    // Masks may still arrive for a frame or two after calibration ends.
+    result.segmentationMasks?.forEach((m) => m.close());
     this.infAvg = this.infAvg * 0.9 + (performance.now() - t0) * 0.1;
 
     const poses = result.landmarks;
@@ -214,12 +323,19 @@ export class MirrorEngine {
           // Estimate hips from shoulders when the waist is out of frame.
           const across = normalize(sub(s.rShoulder, s.lShoulder));
           const down = { x: -across.y, y: across.x };
-          const len = shoulderW * 1.5;
-          lHip = add(s.lShoulder, add(scale(down, len), scale(across, shoulderW * 0.12)));
-          rHip = add(s.rShoulder, add(scale(down, len), scale(across, -shoulderW * 0.12)));
+          // Calibrated proportions: torso length and hip width relative to the shoulders.
+          const len = shoulderW * this.profile.torsoRatio;
+          const inset = (shoulderW * (1 - this.profile.hipJointRatio)) / 2;
+          lHip = add(s.lShoulder, add(scale(down, len), scale(across, inset)));
+          rHip = add(s.rShoulder, add(scale(down, len), scale(across, -inset)));
           hipsEstimated = true;
           if (state === "tracking") state = "partial";
         }
+        // The face anchors tracking (and the collar): ask the user to keep it in view.
+        const faceVisible = (raw.nose?.confidence ?? 0) > 0.5;
+        if (faceVisible) this.faceMissingSince = null;
+        else this.faceMissingSince ??= now;
+        if (this.faceMissingSince !== null && now - this.faceMissingSince > 1000 && state !== "multiple-people") state = "face-hidden";
         if (shoulderW > W * 0.75) state = "too-close";
         const body = this.applyAdjustments({ leftShoulder: s.lShoulder, rightShoulder: s.rShoulder, leftHip: lHip, rightHip: rHip, leftElbow: s.lElbow, rightElbow: s.rElbow });
         pose = { body, leftWrist: this.adjustPoint(s.lWrist, body), rightWrist: this.adjustPoint(s.rWrist, body), head: s.nose, hipsEstimated };

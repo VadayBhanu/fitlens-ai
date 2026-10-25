@@ -194,7 +194,7 @@ export class ClothRenderer implements MirrorRenderer {
     this.key.intensity += (0.7 + luma * 1.2 - this.key.intensity) * 0.5;
   }
 
-  render({ video, pose, opacity, adjustments, timeMs, showBodyModel }: RenderFrame): void {
+  render({ video, pose, opacity, adjustments, timeMs, showBodyModel, profile }: RenderFrame): void {
     if (!this.videoTexture || this.videoTexture.image !== video) {
       this.videoTexture?.dispose();
       this.videoTexture = new THREE.VideoTexture(video);
@@ -211,7 +211,7 @@ export class ClothRenderer implements MirrorRenderer {
     if (!pose) this.cloth?.reset();
 
     if (pose) {
-      const body = buildBodyModel(this.bodyFrame(pose));
+      const body = buildBodyModel(this.bodyFrame(pose), profile);
       this.placeOccluders(body, showBodyModel);
       if (this.cloth) {
         this.cloth.spec.widthScale = adjustments.width;

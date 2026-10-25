@@ -1,4 +1,4 @@
-import type { GarmentCategory, Point2D, UpperBody } from "@fitlens/shared";
+import type { BodyProfile, GarmentCategory, Point2D, UpperBody } from "@fitlens/shared";
 import type { PreparedGarment } from "./garment";
 
 /** Smoothed pose in canvas pixels (y down). `z` is relative depth in the same units (smaller = closer). */
@@ -31,6 +31,8 @@ export interface RenderFrame {
   adjustments: FitAdjustments;
   timeMs: number;
   showBodyModel: boolean;
+  /** The user's calibrated proportions (or typical defaults). */
+  profile: BodyProfile;
 }
 
 /** A compositor that draws the camera frame plus the garment into its own canvas. */

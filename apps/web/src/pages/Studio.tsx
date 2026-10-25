@@ -34,6 +34,7 @@ export default function Studio() {
   const [person, setPerson] = useState<PreparedImage | null>(null);
   const [assessment, setAssessment] = useState<QualityAssessment | null>(null);
   const [checking, setChecking] = useState(false);
+  const [confirmedPerson, setConfirmedPerson] = useState(false);
   const [keepPhoto, setKeepPhoto] = useState(false);
   const [quality, setQuality] = useState<TryOnQuality>("balanced");
   const [job, setJob] = useState<TryOnDTO | null>(null);
@@ -41,6 +42,7 @@ export default function Studio() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const photoReady = !!assessment?.ok && (!assessment.personNotDetected || confirmedPerson);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -85,6 +87,7 @@ export default function Studio() {
     setJob(null);
     setSaved(false);
     setChecking(true);
+    setConfirmedPerson(false);
     try {
       const prepared = await prepareImage(file);
       setPerson(prepared);
@@ -108,7 +111,7 @@ export default function Studio() {
   };
 
   const generate = async (opts: { regenerate?: boolean } = {}) => {
-    if (!garment || !person || !assessment?.ok) return;
+    if (!garment || !person || !photoReady) return;
     setError(null);
     setSaved(false);
     abortRef.current?.abort();
@@ -242,7 +245,7 @@ export default function Studio() {
                 <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap" }}>
                   <img className="thumb" src={person.previewUrl} alt="Your photo" style={{ width: 96, height: 128 }} />
                   <div className="stack" style={{ gap: 8 }}>
-                    {assessment && assessment.ok && assessment.warnings.length === 0 && <span className="badge badge-success">Photo looks good</span>}
+                    {assessment && assessment.ok && assessment.warnings.length === 0 && <span className="badge badge-success">✓ Photo looks good — person detected</span>}
                     {assessment && !assessment.ok && (
                       <Notice kind="error" title="Please use a different photo">
                         <ul>{assessment.blocking.map((b) => <li key={b}>{b}</li>)}</ul>
@@ -251,7 +254,13 @@ export default function Studio() {
                     {assessment && assessment.warnings.length > 0 && (
                       <Notice kind="warn"><ul>{assessment.warnings.map((w) => <li key={w}>{w}</li>)}</ul></Notice>
                     )}
-                    <button className="btn btn-ghost btn-sm" onClick={() => { setPerson(null); setAssessment(null); setJob(null); }}>Choose another photo</button>
+                    {assessment?.ok && assessment.personNotDetected && (
+                      <label className="check">
+                        <input type="checkbox" checked={confirmedPerson} onChange={(e) => setConfirmedPerson(e.target.checked)} />
+                        <span>Yes, this photo shows me (face and upper body). Continue anyway.</span>
+                      </label>
+                    )}
+                    <button className="btn btn-ghost btn-sm" onClick={() => { setPerson(null); setAssessment(null); setJob(null); setConfirmedPerson(false); }}>Choose another photo</button>
                   </div>
                 </div>
                 <label className="check">
@@ -278,7 +287,7 @@ export default function Studio() {
                 <div style={{ marginTop: 10 }}><button className="btn btn-primary btn-sm" onClick={grantConsent}>I agree, continue</button></div>
               </Notice>
             ) : (
-              <button className="btn btn-primary btn-block" disabled={!garment || !person || !assessment?.ok || !!busy} onClick={() => generate()}>
+              <button className="btn btn-primary btn-block" disabled={!garment || !person || !photoReady || !!busy} onClick={() => generate()}>
                 {busy ?? "Generate try-on"}
               </button>
             )}

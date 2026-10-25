@@ -24,7 +24,7 @@ export class FlatRenderer implements MirrorRenderer {
     this.anchors = category === "outerwear" ? DEFAULT_ANCHORS.outerwear : category === "dress" ? DEFAULT_ANCHORS.dress : DEFAULT_ANCHORS.top;
   }
 
-  render({ video, pose, opacity, adjustments, showBodyModel }: RenderFrame): void {
+  render({ video, pose, opacity, adjustments, showBodyModel, profile }: RenderFrame): void {
     const ctx = this.ctx;
     ctx.drawImage(video, 0, 0, this.canvas.width, this.canvas.height);
     if (!pose) return;
@@ -33,7 +33,8 @@ export class FlatRenderer implements MirrorRenderer {
     if (!this.garment || opacity <= 0.01) return;
     const layout = computeGarmentLayout(body, this.anchors, {
       hemExtension: 0.12 * adjustments.length + (adjustments.length - 1) * 0.6,
-      shoulderEase: 1.18 * adjustments.width
+      // Garment width from the user's measured chest (relative to shoulder joints), plus ease.
+      shoulderEase: profile.chestRatio * 1.08 * adjustments.width
     });
     const minX = Math.min(layout.torso[0].x, layout.torso[3].x);
     const maxX = Math.max(layout.torso[1].x, layout.torso[2].x);

@@ -3,6 +3,11 @@ import { join } from "node:path";
 
 const FIX = join(__dirname, ".fixtures");
 const IMG = join(__dirname, "../../apps/web/public/demo-store/img");
+// 200×200 grey PNG: below the minimum resolution.
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAAAAACIM/FCAAAAtklEQVR42u3PQREAAAwCIKMb3ddK7KAB6RMRERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERETkDnJgkk7vm1XgAAAAASUVORK5CYII=",
+  "base64"
+);
 
 test.describe.configure({ mode: "serial" });
 
@@ -78,7 +83,7 @@ test("full studio journey: sign up → garment → photo → consent → try-on 
   await expect(page.getByText("Incorrect email or password.")).toBeVisible();
 });
 
-test("photo quality gate blocks unusable photos", async ({ page }) => {
+test("photo quality gate: confirm when no person is detected, block unusable photos", async ({ page }) => {
   await page.goto("/signup?next=/studio");
   await page.getByLabel("Email").fill(`e2e-q-${Date.now()}@example.com`);
   await page.getByLabel("Password").fill("a very good password");
@@ -86,8 +91,19 @@ test("photo quality gate blocks unusable photos", async ({ page }) => {
   await page.locator("label.check", { hasText: "I accept the" }).locator("input").check();
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/studio/);
-  // A garment image is not a person photo: the on-device check should block it.
+  // A garment image is not a person photo: the on-device check flags it and asks for confirmation.
   await page.locator("section", { hasText: "2 · Your photo" }).locator('input[type="file"]').setInputFiles(join(IMG, "camp-shirt-sage.png"));
+  await expect(page.getByText(/couldn't clearly detect a person/i)).toBeVisible();
+  const confirm = page.getByLabel(/Yes, this photo shows me/);
+  await expect(confirm).toBeVisible();
+  await page.getByRole("button", { name: "I agree, continue" }).click();
+  await page.locator("section", { hasText: "1 · Garment" }).locator('input[type="file"]').setInputFiles(join(IMG, "crew-tee-white.png"));
+  await expect(page.getByRole("button", { name: "Generate try-on" })).toBeDisabled();
+  await confirm.check();
+  await expect(page.getByRole("button", { name: "Generate try-on" })).toBeEnabled();
+
+  // A clearly unusable photo (tiny) is still blocked outright.
+  await page.getByRole("button", { name: "Choose another photo" }).click();
+  await page.locator("section", { hasText: "2 · Your photo" }).locator('input[type="file"]').setInputFiles({ name: "tiny.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.getByText("Please use a different photo")).toBeVisible();
-  await expect(page.getByText(/couldn't find a person/i)).toBeVisible();
 });

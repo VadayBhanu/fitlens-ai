@@ -1,3 +1,5 @@
+import { DEFAULT_PROFILE, type BodyProfile } from "./calibration";
+
 /**
  * Real-time garment cloth simulation for the 3D LiveMirror.
  *
@@ -70,9 +72,30 @@ export interface BodyModel {
   armTrackedR: boolean;
   capsules: Capsule[];
   head: { c: Vec3; r: number } | null;
+  /** Half-widths of the real body outline (px) at shoulders, chest, waist and hips. */
+  outline: { shoulder: number; chest: number; waist: number; hip: number };
 }
 
-export function buildBodyModel(f: BodyFrame3D): BodyModel {
+/** Half-width of the body outline at `t` torso-lengths below the shoulder line (0 = shoulders, 1 = hips). */
+export function outlineHalfWidth(b: Pick<BodyModel, "outline">, t: number): number {
+  const o = b.outline;
+  const stops: [number, number][] = [
+    [0, o.shoulder],
+    [0.3, o.chest],
+    [0.68, o.waist],
+    [1, o.hip]
+  ];
+  if (t <= 0) return o.shoulder;
+  if (t >= 1) return o.hip;
+  for (let k = 0; k < stops.length - 1; k++) {
+    const [t0, w0] = stops[k]!;
+    const [t1, w1] = stops[k + 1]!;
+    if (t <= t1) return w0 + (w1 - w0) * smooth((t - t0) / (t1 - t0));
+  }
+  return o.hip;
+}
+
+export function buildBodyModel(f: BodyFrame3D, profile: BodyProfile = DEFAULT_PROFILE): BodyModel {
   const shoulderMid = v3.lerp(f.shoulderL, f.shoulderR, 0.5);
   const hipMid = v3.lerp(f.hipL, f.hipR, 0.5);
   const up = v3.norm(v3.sub(shoulderMid, hipMid));
@@ -83,15 +106,18 @@ export function buildBodyModel(f: BodyFrame3D): BodyModel {
   const hipWidth = v3.dist(f.hipL, f.hipR);
   const torsoLength = v3.dist(shoulderMid, hipMid);
 
+  const upperLen = shoulderWidth * profile.upperArmRatio;
+  const foreLen = shoulderWidth * profile.forearmRatio;
   const guessArm = (shoulder: Vec3, side: -1 | 1): Vec3[] => {
-    const out = v3.add(v3.scale(across, side * shoulderWidth * 0.08), v3.scale(up, -torsoLength * 0.55));
-    const elbow = v3.add(shoulder, out);
-    const wrist = v3.add(elbow, v3.scale(up, -torsoLength * 0.5));
+    const dir = v3.norm(v3.add(v3.scale(across, side * 0.15), v3.scale(up, -1)));
+    const elbow = v3.add(shoulder, v3.scale(dir, upperLen));
+    const wrist = v3.add(elbow, v3.scale(v3.norm(v3.add(v3.scale(across, side * 0.05), v3.scale(up, -1))), foreLen));
     return [shoulder, elbow, wrist];
   };
   const arm = (shoulder: Vec3, elbow: Vec3 | undefined, wrist: Vec3 | undefined, side: -1 | 1): { pts: Vec3[]; tracked: boolean } => {
     if (!elbow) return { pts: guessArm(shoulder, side), tracked: false };
-    const w = wrist ?? v3.add(elbow, v3.sub(elbow, shoulder));
+    // Missing wrist: continue the upper arm by the calibrated forearm length.
+    const w = wrist ?? v3.add(elbow, v3.scale(v3.norm(v3.sub(elbow, shoulder)), foreLen));
     return { pts: [shoulder, elbow, w], tracked: true };
   };
   const L = arm(f.shoulderL, f.elbowL, f.wristL, -1);
@@ -118,7 +144,14 @@ export function buildBodyModel(f: BodyFrame3D): BodyModel {
     armTrackedL: L.tracked,
     armTrackedR: R.tracked,
     capsules,
-    head: f.head ? { c: f.head, r: shoulderWidth * 0.36 } : null
+    head: f.head ? { c: f.head, r: shoulderWidth * 0.36 } : null,
+    outline: {
+      // The shoulder outline sits outside the joints; never narrower than the chest suggests.
+      shoulder: shoulderWidth * 0.5 * Math.max(1.12, profile.chestRatio * 0.95),
+      chest: shoulderWidth * 0.5 * profile.chestRatio,
+      waist: shoulderWidth * 0.5 * profile.waistRatio,
+      hip: shoulderWidth * 0.5 * profile.hipRatio
+    }
   };
 }
 
@@ -148,11 +181,11 @@ export function defaultSpec(kind: ClothKind): GarmentSpec {
   const base = { segments: 28, rows: 18, sleeveSegments: 12, sleeveRows: 10, widthScale: 1, lengthScale: 1 };
   switch (kind) {
     case "outerwear":
-      return { ...base, kind, ease: 1.16, length: 1.18, flare: 1.05, sleeveLength: 0.97 };
+      return { ...base, kind, ease: 1.12, length: 1.18, flare: 1.05, sleeveLength: 0.97 };
     case "dress":
-      return { ...base, kind, rows: 24, ease: 1.08, length: 2.3, flare: 1.7, sleeveLength: 0.18 };
+      return { ...base, kind, rows: 24, ease: 1.05, length: 2.3, flare: 1.7, sleeveLength: 0.18 };
     default:
-      return { ...base, kind, ease: 1.1, length: 1.12, flare: 1.0, sleeveLength: 0.42 };
+      return { ...base, kind, ease: 1.06, length: 1.12, flare: 1.0, sleeveLength: 0.42 };
   }
 }
 
@@ -362,16 +395,14 @@ export class GarmentCloth {
     const R = this.torso.rings;
     const N = this.torso.segments;
     const length = b.torsoLength * s.length * s.lengthScale;
-    const aTop = b.shoulderWidth * 0.5 * s.ease * s.widthScale;
-    const aHip = Math.max(b.hipWidth * 0.5 * 1.3, aTop * 0.9) * s.ease * s.widthScale;
+    const ease = s.ease * s.widthScale;
     const neckLift = b.torsoLength * 0.06;
     for (let r = 0; r < R; r++) {
       const v = r / (R - 1);
       const along = -neckLift + length * v;
       const center = v3.add(b.shoulderMid, v3.scale(b.up, -along));
-      // Shoulder → chest → waist → hem width profile.
-      const hipT = Math.min(along / Math.max(b.torsoLength, 1), 1);
-      let a = aTop + (aHip - aTop) * smooth(Math.max(0, hipT));
+      // Width follows the measured body outline (shoulders → chest → waist → hips) plus ease.
+      let a = outlineHalfWidth(b, along / Math.max(b.torsoLength, 1)) * ease;
       if (along > b.torsoLength) a *= 1 + (s.flare - 1) * Math.min((along - b.torsoLength) / Math.max(length - b.torsoLength, 1), 1);
       // Rounded shoulders: the top ring is narrower front-to-back.
       const depth = a * (0.52 + 0.1 * Math.min(v * 4, 1));
@@ -420,9 +451,11 @@ export class GarmentCloth {
     if (y > -b.torsoLength * 0.35 && y < b.torsoLength * 1.02) {
       const x = dx * b.across.x + dy * b.across.y + dz * b.across.z;
       const z = dx * b.forward.x + dy * b.forward.y + dz * b.forward.z;
-      const t = Math.max(0, Math.min(1, y / b.torsoLength));
-      const A = (b.hipWidth * 0.5 * 1.15 + (b.shoulderWidth * 0.42 - b.hipWidth * 0.5 * 1.15) * t) * 1.0;
-      const B = A * 0.55;
+      // y is measured up from the hips; the outline is indexed down from the shoulders.
+      const t = Math.max(0, Math.min(1, 1 - y / b.torsoLength));
+      // Near the shoulders the arms attach, so the collider tapers in to stay clear of the arm capsules.
+      const A = outlineHalfWidth(b, t) * (t < 0.15 ? 0.82 + 1.0 * t : 0.97);
+      const B = A * 0.6;
       const e = (x * x) / (A * A) + (z * z) / (B * B);
       if (e < 1 && e > 1e-6) {
         const k = 1 / Math.sqrt(e) - 1;

@@ -55,10 +55,11 @@ test("live mirror tracks a person from the camera, captures a photo and records 
   await page.getByRole("button", { name: "Discard" }).click();
 
   await page.getByRole("button", { name: "Record clip" }).click();
-  await page.waitForTimeout(2500);
+  // Record long enough for a few frames even when pose inference runs on the CPU.
+  await page.waitForTimeout(4000);
   await page.getByRole("button", { name: "Stop recording" }).click();
   const video = page.locator(".card video");
-  await expect(video).toBeVisible();
+  await expect(video).toBeVisible({ timeout: 45_000 });
   const duration = await video.evaluate((v: HTMLVideoElement) => new Promise<number>((r) => (v.readyState >= 1 ? r(v.duration) : v.addEventListener("loadedmetadata", () => r(v.duration)))));
   expect(Number.isNaN(duration)).toBeFalsy();
 

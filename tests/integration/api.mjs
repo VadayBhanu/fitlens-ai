@@ -3,13 +3,13 @@
 // deals, reviews, wardrobe, authorization boundaries, export and deletion.
 //
 // Usage: node tests/integration/api.mjs
-import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { startMockFashn } from "../support/mock-fashn.mjs";
+import { killTree, removeDir, wranglerRunner } from "../support/proc.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const apiDir = join(root, "apps/api");
@@ -25,9 +25,9 @@ const mock = mockFashn.server;
 
 // ---------- worker ----------
 const persist = mkdtempSync(join(tmpdir(), "fitlens-it-"));
-const wrangler = join(root, "node_modules/.bin/wrangler");
-execFileSync(wrangler, ["d1", "migrations", "apply", "fitlens", "--local", "--persist-to", persist], { cwd: apiDir, stdio: "ignore" });
-execFileSync(wrangler, ["d1", "execute", "fitlens", "--local", "--persist-to", persist, "--file=seeds/demo.sql"], { cwd: apiDir, stdio: "ignore" });
+const wrangler = wranglerRunner(root);
+wrangler.sync(["d1", "migrations", "apply", "fitlens", "--local", "--persist-to", persist], { cwd: apiDir, stdio: "ignore" });
+wrangler.sync(["d1", "execute", "fitlens", "--local", "--persist-to", persist, "--file=seeds/demo.sql"], { cwd: apiDir, stdio: "ignore" });
 const vars = {
   SIGNING_SECRET: "integration-signing-secret-123456",
   ADMIN_TOKEN: "integration-admin-token-123456",
@@ -36,8 +36,7 @@ const vars = {
   DEV_ALLOW_PRIVATE_HOSTS: "true",
   PASSWORD_PBKDF2_ITERATIONS: "1000"
 };
-const worker = spawn(
-  wrangler,
+const worker = wrangler.spawn(
   ["dev", "--port", String(PORT), "--ip", "127.0.0.1", "--persist-to", persist, ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])],
   { cwd: apiDir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } }
 );
@@ -46,9 +45,9 @@ worker.stdout.on("data", (d) => (log += d));
 worker.stderr.on("data", (d) => (log += d));
 
 const cleanup = () => {
-  worker.kill("SIGTERM");
+  killTree(worker);
   mock.close();
-  rmSync(persist, { recursive: true, force: true });
+  removeDir(persist);
 };
 
 async function call(method, path, { token, json, body, headers = {} } = {}) {

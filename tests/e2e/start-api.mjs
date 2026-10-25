@@ -1,20 +1,20 @@
 // Starts the real API (wrangler dev, local D1/R2) on :8787 with a mock FASHN
 // provider on :9799, for Playwright end-to-end tests. Keeps running until killed.
-import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startMockFashn } from "../support/mock-fashn.mjs";
+import { killTree, removeDir, wranglerRunner } from "../support/proc.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const apiDir = join(root, "apps/api");
-const wrangler = join(root, "node_modules/.bin/wrangler");
+const wrangler = wranglerRunner(root);
 const persist = mkdtempSync(join(tmpdir(), "fitlens-e2e-"));
 
 const mock = await startMockFashn({ port: 9799, imageDir: join(root, "apps/web/public/demo-store/img") });
-execFileSync(wrangler, ["d1", "migrations", "apply", "fitlens", "--local", "--persist-to", persist], { cwd: apiDir, stdio: "ignore" });
-execFileSync(wrangler, ["d1", "execute", "fitlens", "--local", "--persist-to", persist, "--file=seeds/demo.sql"], { cwd: apiDir, stdio: "ignore" });
+wrangler.sync(["d1", "migrations", "apply", "fitlens", "--local", "--persist-to", persist], { cwd: apiDir, stdio: "ignore" });
+wrangler.sync(["d1", "execute", "fitlens", "--local", "--persist-to", persist, "--file=seeds/demo.sql"], { cwd: apiDir, stdio: "ignore" });
 
 const vars = {
   SIGNING_SECRET: "e2e-signing-secret-0123456789abcdef",
@@ -24,15 +24,15 @@ const vars = {
   PASSWORD_PBKDF2_ITERATIONS: "1000",
   ALLOWED_ORIGINS: "http://localhost:5173,chrome-extension://*"
 };
-const child = spawn(wrangler, ["dev", "--port", "8787", "--persist-to", persist, ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])], {
+const child = wrangler.spawn(["dev", "--port", "8787", "--persist-to", persist, ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])], {
   cwd: apiDir,
   stdio: "inherit",
   env: { ...process.env, CI: "1" }
 });
 const shutdown = () => {
-  child.kill("SIGTERM");
+  killTree(child);
   mock.close();
-  rmSync(persist, { recursive: true, force: true });
+  removeDir(persist);
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);
